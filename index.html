@@ -294,6 +294,7 @@ video { width: 100%; border-radius: var(--radius-sm); background: #000; }
   <div class="sidebar-header">
     <h3>微课</h3>
     <div class="course-title">豌豆产品介绍（上）· 新人微课</div>
+    <div style="font-size:11px;color:#94a3b8;margin-top:5px;">👤 当前学习者：<span id="learnerName">—</span></div>
   </div>
   <div class="sidebar-progress">
     <div class="progress-label"><span>学习进度</span><span id="progressPercent">0%</span></div>
@@ -336,7 +337,7 @@ video { width: 100%; border-radius: var(--radius-sm); background: #000; }
     <div class="cert-sub">CERTIFICATE OF COMPLETION</div>
     <div class="cert-body">
       <p>兹证明</p>
-      <p><span class="cert-name" id="certStudentName" contenteditable="true">请填写姓名</span></p>
+      <p><span class="cert-name" id="certStudentName">姓名</span></p>
       <p>已完成</p>
       <p class="cert-course">豌豆产品介绍（上）· 新人微课</p>
       <p>全部课程内容并通过考核</p>
@@ -589,12 +590,12 @@ let timerInterval = null;
 function init() {
   renderSidebar();
   renderSections();
+  loadProgress();
   navigateTo(0);
   setupQuizListeners();
   setupFinalTaskListener();
   startTimer();
   loadNotes();
-  loadProgress();
   initPlayers();
   updateChapterGates();
 }
@@ -857,7 +858,7 @@ function loadNotes() {
 function saveProgress() {
   const state = {
     completedSections: [...completedSections],
-    quizAnswers: quizAnswers, examState: examState, videoLedger: videoLedger
+    quizAnswers: quizAnswers, examState: examState, videoLedger: videoLedger, name: profileName
   };
   LS.setItem(LS_PREFIX + '_progress', JSON.stringify(state));
 }
@@ -870,6 +871,7 @@ function loadProgress() {
       quizAnswers = saved.quizAnswers || {};
       examState = Object.assign({ attempts: 0, bestScore: 0, passed: false, submitted: false, answers: {} }, saved.examState || {});
       videoLedger = Object.assign({}, saved.videoLedger || {});
+      if (saved.name && profileName && saved.name !== profileName) { completedSections = new Set(); quizAnswers = {}; examState = { attempts: 0, bestScore: 0, passed: false, submitted: false, answers: {} }; videoLedger = {}; }
       updateProgress();
       updateSidebarLocks();
     }
@@ -885,7 +887,7 @@ function checkCertificate() {
   if (allDone) {
     setTimeout(() => {
       showToast('🏆 恭喜完成全部课程！点击领取结业证书', 'success');
-      document.getElementById('certStudentName').textContent = '请填写姓名';
+      document.getElementById('certStudentName').textContent = profileName;
       document.getElementById('certScore').textContent = '综合评定：通过';
       document.getElementById('certFinalScore').textContent = '终极考核得分：' + (examState.passed ? examState.bestScore : '—') + ' 分';
       document.getElementById('certDate').textContent = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -1229,7 +1231,72 @@ function initPlayers(){
   });
   setInterval(() => { if (videoLedgerDirty) { saveProgress(); videoLedgerDirty = false; } }, 5000);
 }
-document.addEventListener('DOMContentLoaded', init);
+
+// ===== 学习者姓名绑定 =====
+let profileName = '';
+function ensureProfileModal(){
+  let m = document.getElementById('profileModal');
+  if (m) return m;
+  const st = document.createElement('style');
+  st.textContent = `
+  #profileModal{position:fixed;inset:0;background:rgba(15,23,42,.75);z-index:800;display:flex;align-items:center;justify-content:center;}
+  .pm-card{background:#fff;border-radius:16px;padding:34px 38px;width:min(92vw,420px);box-shadow:0 20px 50px rgba(0,0,0,.3);text-align:center;}
+  .pm-title{font-size:22px;font-weight:800;color:#1e293b;margin-bottom:6px;}
+  .pm-sub{font-size:13px;color:#64748b;margin-bottom:20px;line-height:1.6;}
+  #pmName{width:100%;box-sizing:border-box;padding:12px 14px;border:2px solid var(--border);border-radius:10px;font-size:15px;text-align:center;outline:none;}
+  #pmName:focus{border-color:var(--primary);}
+  .pm-err{color:var(--danger);font-size:12px;min-height:18px;margin:8px 0;}
+  .pm-tip{font-size:11px;color:#94a3b8;margin-top:14px;line-height:1.7;}
+  `;
+  document.head.appendChild(st);
+  m = document.createElement('div');
+  m.id = 'profileModal';
+  m.innerHTML = '<div class="pm-card"><div class="pm-title">👋 欢迎学习本课程</div>'
+    + '<div class="pm-sub">请输入你的姓名，学习记录与证书将与姓名绑定</div>'
+    + '<input id="pmName" maxlength="20" placeholder="请输入姓名（2-20字）" autocomplete="off">'
+    + '<div id="pmErr" class="pm-err"></div>'
+    + '<button id="pmGo" class="btn" style="width:100%;">确认进入课程</button>'
+    + '<div class="pm-tip">提示：同一台电脑换人学习时，填入不同姓名将清空原有做题与观看记录，重新开始</div></div>';
+  document.body.appendChild(m);
+  return m;
+}
+function resetAllProgress(){
+  try {
+    LS.removeItem(LS_PREFIX + '_progress');
+    LS.removeItem(LS_PREFIX + '_notes');
+    LS.removeItem(LS_PREFIX + '_study_seconds');
+  } catch(e) {}
+}
+function confirmProfile(){
+  const inp = document.getElementById('pmName');
+  const err = document.getElementById('pmErr');
+  const name = (inp.value || '').trim();
+  if (name.length < 2 || name.length > 20) { err.textContent = '请输入2-20字的姓名'; return; }
+  let stored = null;
+  try { stored = LS.getItem(LS_PREFIX + '_name'); } catch(e) {}
+  if (stored && stored !== name) {
+    if (!confirm('检测到本机已有「' + stored + '」的学习记录，与当前填写的「' + name + '」不同。\n确认后原有做题/观看记录将清空，「' + name + '」将重新开始。')) return;
+    resetAllProgress();
+  }
+  profileName = name;
+  try { LS.setItem(LS_PREFIX + '_name', name); } catch(e) {}
+  const m = document.getElementById('profileModal');
+  if (m) m.remove();
+  const lbl = document.getElementById('learnerName');
+  if (lbl) lbl.textContent = name;
+  init();
+}
+function renderProfileGate(){
+  let last = null;
+  try { last = LS.getItem(LS_PREFIX + '_name'); } catch(e) {}
+  const m = ensureProfileModal();
+  const inp = document.getElementById('pmName');
+  if (last) inp.value = last;
+  document.getElementById('pmGo').addEventListener('click', confirmProfile);
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') confirmProfile(); });
+  setTimeout(() => inp.focus(), 100);
+}
+document.addEventListener('DOMContentLoaded', renderProfileGate);
 </script>
 </body>
 </html>
